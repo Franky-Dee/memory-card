@@ -10,6 +10,7 @@ backend/.mypy_cache/
 backend/app/__pycache__/
 **/__pycache__/
 *.pyc
+*.tsbuildinfo
 .env
 .env.*
 !.env.example
