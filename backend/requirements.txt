@@ -1,0 +1,9 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pydantic==2.11.4
+pydantic-settings==2.8.1
+motor==3.7.0
+pyjwt==2.9.0
+bcrypt==4.3.0
+email-validator==2.2.0
+

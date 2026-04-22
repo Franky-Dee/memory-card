@@ -1,0 +1,30 @@
+services:
+  mongo:
+    image: mongo:8
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  backend:
+    build:
+      context: .\backend
+    ports:
+      - "8000:8000"
+    environment:
+      DEMO_MODE: "true"
+      MONGO_URL: mongodb://mongo:27017
+      MONGO_DATABASE: memory_card
+    depends_on:
+      - mongo
+
+  frontend:
+    build:
+      context: .\frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo-data:
