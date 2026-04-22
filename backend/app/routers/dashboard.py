@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.core.auth import get_current_user
-from app.models.schemas import AuthUser, CommentCreateRequest, DashboardResponse, FeedItem, ReviewHighlight
+from app.models.schemas import AuthUser, CommentCreateRequest, DashboardResponse, FeedItem, ReactionCreateRequest, ReviewHighlight
 from app.services.store import comment_on_feed, get_dashboard, get_profile, react_to_feed
 
 router = APIRouter(tags=["dashboard"])
@@ -18,8 +18,12 @@ async def review_highlights(current_user: AuthUser = Depends(get_current_user)) 
 
 
 @router.post("/feed/{feed_id}/react", response_model=FeedItem)
-async def react(feed_id: str, current_user: AuthUser = Depends(get_current_user)) -> FeedItem:
-    return react_to_feed(current_user, feed_id)
+async def react(
+    feed_id: str,
+    payload: ReactionCreateRequest,
+    current_user: AuthUser = Depends(get_current_user),
+) -> FeedItem:
+    return react_to_feed(current_user, feed_id, payload)
 
 
 @router.post("/feed/{feed_id}/comments", response_model=FeedItem)

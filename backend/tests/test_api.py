@@ -55,16 +55,29 @@ class ApiSmokeTests(unittest.TestCase):
 
     def test_library_add_and_update(self) -> None:
         headers = self.auth_headers()
-        search = self.client.get("/api/games/search?q=balatro", headers=headers)
-        game_id = next(item["id"] for item in search.json() if item["title"] == "Balatro")
-
-        created = self.client.post(
-            "/api/library",
-            headers=headers,
-            json={"game_id": game_id, "platform": "PC", "status": "want_to_play"},
+        search = self.client.get("/api/games/search?q=cyberpunk", headers=headers)
+        game_id = next(item["id"] for item in search.json() if item["title"] == "Cyberpunk 2077")
+        library = self.client.get("/api/library", headers=headers)
+        self.assertEqual(library.status_code, 200)
+        existing_entry = next(
+            (
+                item
+                for item in library.json()
+                if item["game_id"] == game_id and item["platform"].lower() == "pc"
+            ),
+            None,
         )
-        self.assertEqual(created.status_code, 200)
-        entry_id = created.json()["id"]
+
+        if existing_entry is not None:
+            entry_id = existing_entry["id"]
+        else:
+            created = self.client.post(
+                "/api/library",
+                headers=headers,
+                json={"game_id": game_id, "platform": "PC", "status": "want_to_play"},
+            )
+            self.assertEqual(created.status_code, 200)
+            entry_id = created.json()["id"]
 
         updated = self.client.patch(
             f"/api/library/{entry_id}",

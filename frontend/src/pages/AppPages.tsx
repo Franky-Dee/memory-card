@@ -1,6 +1,15 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { SectionCard } from "../components/SectionCard";
+import {
+  api,
+  type GameDetailResponse,
+  type GameSearchResult,
+  type ProfileResponse,
+  type ReviewHighlight,
+  type ScoreBreakdown,
+} from "../lib/api";
 import { useAppData } from "../lib/app-data";
 import { useAuth } from "../lib/auth";
 import { avatarPresets, bannerPresets } from "../lib/presets";
@@ -27,81 +36,281 @@ const reviewCategories = [
   { key: "emotional_impact", label: "Emotional Impact" },
 ] as const;
 
+const reactionEmojiOptions = ["🔥", "😍", "😂", "😮", "🎮"];
+const commentEmojiOptions = ["🔥", "🎮", "😭", "👏", "💜"];
+
 function Avatar({ src, alt }: { src: string; alt: string }) {
   return <img src={src} alt={alt} className="avatar" />;
 }
 
-function DetailModal({
-  title,
-  subtitle,
-  onClose,
-  children,
+function IdentityLink({
+  to,
+  avatar,
+  name,
+  handle,
 }: {
-  title: string;
-  subtitle?: string;
-  onClose: () => void;
-  children: ReactNode;
+  to: string;
+  avatar: string;
+  name: string;
+  handle: string;
 }) {
   return (
-    <div className="detail-modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-        <div className="detail-modal__header">
-          <div>
-            <p className="eyebrow">Detail view</p>
-            <h2>{title}</h2>
-            {subtitle ? <p className="subtle-text">{subtitle}</p> : null}
-          </div>
-          <button className="ghost-button" type="button" onClick={onClose}>
-            Close
+    <Link to={to} className="identity-link">
+      <Avatar src={avatar} alt={name} />
+      <div>
+        <strong>{name}</strong>
+        <p className="subtle-text">{handle}</p>
+      </div>
+    </Link>
+  );
+}
+
+function ReactionStack({ emojis }: { emojis: string[] }) {
+  if (!emojis.length) {
+    return null;
+  }
+
+  return (
+    <div className="reaction-stack" aria-label="Recent reactions">
+      {emojis.map((emoji, index) => (
+        <span key={`${emoji}-${index}`} className="reaction-stack__item" style={{ marginLeft: index === 0 ? 0 : -8 }}>
+          {emoji}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ReactionBar({
+  current,
+  onSelect,
+}: {
+  current: string | null;
+  onSelect: (emoji: string) => void;
+}) {
+  return (
+    <div className="reaction-bar">
+      {reactionEmojiOptions.map((emoji) => (
+        <button
+          key={emoji}
+          className={current === emoji ? "reaction-chip reaction-chip--active" : "reaction-chip"}
+          type="button"
+          onClick={() => onSelect(emoji)}
+        >
+          {emoji}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CommentComposer({
+  placeholder,
+  onSubmit,
+}: {
+  placeholder: string;
+  onSubmit: (value: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState("");
+
+  return (
+    <div className="comment-composer">
+      <div className="emoji-row">
+        {commentEmojiOptions.map((emoji) => (
+          <button key={emoji} className="emoji-button" type="button" onClick={() => setValue((current) => `${current}${emoji}`)}>
+            {emoji}
           </button>
-        </div>
-        <div className="detail-modal__content">{children}</div>
+        ))}
+      </div>
+      <div className="comment-entry">
+        <input value={value} onChange={(event) => setValue(event.target.value)} placeholder={placeholder} />
+        <button
+          className="primary-button"
+          type="button"
+          onClick={async () => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+              return;
+            }
+            await onSubmit(trimmed);
+            setValue("");
+          }}
+        >
+          Post
+        </button>
       </div>
     </div>
   );
 }
 
+function useInfiniteReveal(total: number, step = 8) {
+  const [visibleCount, setVisibleCount] = useState(step);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setVisibleCount(step);
+  }, [total, step]);
+
+  useEffect(() => {
+    if (!loadMoreRef.current) {
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisibleCount((current) => Math.min(total, current + step));
+      }
+    });
+    observer.observe(loadMoreRef.current);
+    return () => observer.disconnect();
+  }, [step, total]);
+
+  return { visibleCount, loadMoreRef };
+}
+
+function MomentumPanel({
+  totalHours,
+  topScore,
+  totalGames,
+  totalReviews,
+}: {
+  totalHours: number;
+  topScore: number;
+  totalGames: number;
+  totalReviews: number;
+}) {
+  return (
+    <SectionCard title="Your momentum" eyebrow="At a glance">
+      <div className="metric-grid">
+        <div>
+          <span>{totalHours}h</span>
+          <small>Tracked game time</small>
+        </div>
+        <div>
+          <span>{topScore}</span>
+          <small>Highest review score</small>
+        </div>
+        <div>
+          <span>{totalGames}</span>
+          <small>Games in library</small>
+        </div>
+        <div>
+          <span>{totalReviews}</span>
+          <small>Published reviews</small>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+function ReviewPreviewCard({
+  review,
+  onReact,
+  onComment,
+  onDelete,
+  showDelete,
+}: {
+  review: ReviewHighlight;
+  onReact: (emoji: string) => void;
+  onComment: (body: string) => Promise<void>;
+  onDelete?: () => void;
+  showDelete?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = expanded ? review.body : `${review.body.slice(0, 220)}${review.body.length > 220 ? "..." : ""}`;
+
+  return (
+    <article className="mini-card mini-card--review">
+      <div className="identity-row">
+        <Link to={`/app/games/${review.game_id}`}>
+          <img src={review.cover_url} alt={review.game_title} className="game-cover game-cover--compact" />
+        </Link>
+        <div>
+          <Link to={`/app/reviews/${review.id}`} className="mini-card__title-link">
+            <h3>{review.game_title}</h3>
+          </Link>
+          <p>{review.title}</p>
+          <p className="subtle-text">
+            {review.total_score}/100 · <Link to={`/app/users/${review.author_id}`}>{review.author_name}</Link>
+          </p>
+        </div>
+      </div>
+      <p>{review.verdict}</p>
+      <p>{preview}</p>
+      {review.body.length > 220 ? (
+        <button className="inline-button" type="button" onClick={() => setExpanded((current) => !current)}>
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      ) : null}
+      <div className="meta-row meta-row--left">
+        <ReactionStack emojis={review.recent_reactions} />
+        <span>{review.reaction_count} reactions</span>
+        <span>{review.comment_count} comments</span>
+        <Link to={`/app/reviews/${review.id}`} className="inline-button">
+          View full review
+        </Link>
+        {showDelete && onDelete ? (
+          <button className="ghost-button" type="button" onClick={onDelete}>
+            Delete review
+          </button>
+        ) : null}
+      </div>
+      <ReactionBar current={review.current_user_reaction} onSelect={onReact} />
+      <div className="comment-stack">
+        {review.comments.map((comment) => (
+          <div key={comment.id} className="comment-card">
+            <Avatar src={comment.author_avatar_url} alt={comment.author_name} />
+            <div>
+              <strong>{comment.author_name}</strong>
+              <p>{comment.body}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <CommentComposer placeholder="Comment on this review" onSubmit={onComment} />
+    </article>
+  );
+}
+
 export function FeedPage() {
   const { dashboard, loading, error, reactToFeed, commentOnFeed } = useAppData();
-  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const { visibleCount, loadMoreRef } = useInfiniteReveal(dashboard?.feed.length ?? 0, 10);
 
   if (loading && !dashboard) {
-    return (
-      <div className="page-grid">
-        <SectionCard title="Following feed">Loading your feed...</SectionCard>
-      </div>
-    );
+    return <SectionCard title="Following feed">Loading your feed...</SectionCard>;
   }
+
+  const items = dashboard?.feed.slice(0, visibleCount) ?? [];
 
   return (
     <div className="page-grid page-grid--split">
       <SectionCard title="Following feed" eyebrow="Main home">
         {error ? <p className="error-text">{error}</p> : null}
         <div className="stack-list">
-          {dashboard?.feed.map((entry) => (
+          {items.map((entry) => (
             <article key={entry.id} className="activity-card activity-card--rich">
-              <img src={entry.cover_url} alt={entry.game_title} className="game-cover game-cover--feed" />
+              <Link to={`/app/games/${entry.game_id}`}>
+                <img src={entry.cover_url} alt={entry.game_title} className="game-cover game-cover--feed" />
+              </Link>
               <div className="activity-card__body">
                 <div className="activity-card__top">
-                  <div className="identity-row">
-                    <Avatar src={entry.actor_avatar_url} alt={entry.actor_name} />
-                    <div>
-                      <p className="activity-card__title">
-                        <strong>{entry.actor_name}</strong> <span>{entry.actor_handle}</span>
-                      </p>
-                      <small className="subtle-text">{new Date(entry.timestamp).toLocaleString()}</small>
-                    </div>
-                  </div>
+                  <IdentityLink
+                    to={`/app/users/${entry.actor_id}`}
+                    avatar={entry.actor_avatar_url}
+                    name={entry.actor_name}
+                    handle={entry.actor_handle}
+                  />
                   <span className="score-tag">{entry.activity_type.replace("_", " ")}</span>
                 </div>
-                <h3>{entry.game_title}</h3>
+                <Link to={`/app/games/${entry.game_id}`} className="mini-card__title-link">
+                  <h3>{entry.game_title}</h3>
+                </Link>
                 <p>{entry.summary}</p>
                 <div className="meta-row meta-row--left">
-                  <button className="ghost-button" type="button" onClick={() => void reactToFeed(entry.id)}>
-                    {entry.current_user_reacted ? "Unreact" : "React"} · {entry.reaction_count}
-                  </button>
+                  <ReactionStack emojis={entry.recent_reactions} />
+                  <span>{entry.reaction_count} reactions</span>
                   <span>{entry.comment_count} comments</span>
                 </div>
+                <ReactionBar current={entry.current_user_reaction} onSelect={(emoji) => void reactToFeed(entry.id, emoji)} />
                 <div className="comment-stack">
                   {entry.comments.map((comment) => (
                     <div key={comment.id} className="comment-card">
@@ -112,64 +321,32 @@ export function FeedPage() {
                       </div>
                     </div>
                   ))}
-                  <div className="comment-entry">
-                    <input
-                      value={commentDrafts[entry.id] ?? ""}
-                      onChange={(event) => setCommentDrafts((current) => ({ ...current, [entry.id]: event.target.value }))}
-                      placeholder="Add a comment"
-                    />
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={async () => {
-                        const body = commentDrafts[entry.id]?.trim();
-                        if (!body) {
-                          return;
-                        }
-                        await commentOnFeed(entry.id, body);
-                        setCommentDrafts((current) => ({ ...current, [entry.id]: "" }));
-                      }}
-                    >
-                      Post
-                    </button>
-                  </div>
                 </div>
+                <CommentComposer placeholder="Add a comment" onSubmit={(body) => commentOnFeed(entry.id, body)} />
               </div>
             </article>
           ))}
+          <div ref={loadMoreRef} className="infinite-sentinel">
+            Loading more from your following feed...
+          </div>
         </div>
       </SectionCard>
 
-      <SectionCard title="Your momentum" eyebrow="At a glance">
-        <div className="metric-grid">
-          <div>
-            <span>{dashboard?.library.reduce((sum, game) => sum + game.hours_played, 0) ?? 0}h</span>
-            <small>Tracked game time</small>
-          </div>
-          <div>
-            <span>{dashboard?.reviews[0]?.total_score ?? 0}</span>
-            <small>Highest review score</small>
-          </div>
-          <div>
-            <span>{dashboard?.library.length ?? 0}</span>
-            <small>Games in library</small>
-          </div>
-          <div>
-            <span>{dashboard?.reviews.length ?? 0}</span>
-            <small>Published reviews</small>
-          </div>
-        </div>
-      </SectionCard>
+      <MomentumPanel
+        totalHours={dashboard?.library.reduce((sum, game) => sum + game.hours_played, 0) ?? 0}
+        topScore={dashboard?.reviews[0]?.total_score ?? 0}
+        totalGames={dashboard?.library.length ?? 0}
+        totalReviews={dashboard?.reviews.length ?? 0}
+      />
     </div>
   );
 }
 
 export function DiscoverPage() {
-  const { dashboard, peopleSearchResults, gameSearchResults, searchPeople, searchGames, toggleFollow, addGameToLibrary } =
-    useAppData();
-  const { user } = useAuth();
+  const { dashboard, peopleSearchResults, searchPeople, toggleFollow } = useAppData();
   const [peopleQuery, setPeopleQuery] = useState("");
-  const [gameQuery, setGameQuery] = useState("");
+  const { visibleCount, loadMoreRef } = useInfiniteReveal(dashboard?.explore_posts.length ?? 0, 12);
+  const explorePosts = useMemo(() => dashboard?.explore_posts.slice(0, visibleCount) ?? [], [dashboard?.explore_posts, visibleCount]);
 
   return (
     <div className="page-grid">
@@ -185,16 +362,12 @@ export function DiscoverPage() {
           </button>
         </div>
         <div className="card-grid card-grid--people">
-          {(peopleSearchResults.length ? peopleSearchResults : dashboard?.discover_users ?? []).map((person) => (
+          {peopleSearchResults.map((person) => (
             <article key={person.id} className="person-card">
-              <div className="person-card__banner" style={{ backgroundImage: `url(${person.banner_url})` }} />
+              <Link to={`/app/users/${person.id}`} className="person-card__banner" style={{ backgroundImage: `url(${person.banner_url})` }} />
               <div className="person-card__content">
-                <Avatar src={person.avatar_url} alt={person.display_name} />
+                <IdentityLink to={`/app/users/${person.id}`} avatar={person.avatar_url} name={person.display_name} handle={`@${person.username}`} />
                 <div>
-                  <h3>{person.display_name}</h3>
-                  <p className="subtle-text">
-                    @{person.username} · {person.shareable_id}
-                  </p>
                   <p>{person.tagline}</p>
                   <p className="subtle-text">{person.follower_count} followers</p>
                 </div>
@@ -211,46 +384,30 @@ export function DiscoverPage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="Suggested games" eyebrow="Clickable suggestions">
-        <div className="toolbar-row">
-          <input value={gameQuery} onChange={(event) => setGameQuery(event.target.value)} placeholder="Search games" />
-          <button className="primary-button" type="button" onClick={() => void searchGames(gameQuery)}>
-            Search games
-          </button>
-        </div>
-        <div className="card-grid">
-          {gameSearchResults.map((game) => (
-            <article key={game.id} className="mini-card mini-card--game">
-              <img src={game.cover_url} alt={game.title} className="game-cover" />
-              <div>
-                <h3>{game.title}</h3>
-                <p className="subtle-text">
-                  {game.release_year ?? "Upcoming"} · {game.platforms.join(" · ")}
-                </p>
-                <p>{game.summary ?? "No description available yet."}</p>
-              </div>
-              <div className="control-row">
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={() =>
-                    void addGameToLibrary({
-                      game_id: game.id,
-                      platform: game.platforms[0] ?? "PC",
-                      status: "want_to_play",
-                    })
-                  }
-                >
-                  Add to library
-                </button>
-                <button className="ghost-button" type="button" onClick={() => setGameQuery(game.title)}>
-                  Reuse search
-                </button>
+      <SectionCard title="Community discovery" eyebrow="Random posts">
+        <div className="discover-grid">
+          {explorePosts.map((post) => (
+            <article key={post.id} className="discover-tile">
+              <Link to={`/app/games/${post.game_id}`}>
+                <img src={post.cover_url} alt={post.game_title} className="game-cover" />
+              </Link>
+              <div className="discover-tile__content">
+                <IdentityLink to={`/app/users/${post.actor_id}`} avatar={post.actor_avatar_url} name={post.actor_name} handle={post.actor_handle} />
+                <Link to={`/app/games/${post.game_id}`} className="mini-card__title-link">
+                  <strong>{post.game_title}</strong>
+                </Link>
+                <p>{post.summary}</p>
+                <div className="meta-row meta-row--left">
+                  <ReactionStack emojis={post.recent_reactions} />
+                  <span>{post.reaction_count}</span>
+                </div>
               </div>
             </article>
           ))}
         </div>
-        <p className="subtle-text">Your shareable profile ID is <strong>{user?.shareable_id}</strong>.</p>
+        <div ref={loadMoreRef} className="infinite-sentinel">
+          Pulling in more discovery posts...
+        </div>
       </SectionCard>
     </div>
   );
@@ -259,106 +416,106 @@ export function DiscoverPage() {
 export function LibraryPage() {
   const { dashboard, gameSearchResults, searchGames, addGameToLibrary, updateLibraryEntry } = useAppData();
   const [query, setQuery] = useState("");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (query.trim().length < 2) {
       return;
     }
-    const timeoutId = window.setTimeout(() => {
-      void searchGames(query);
-    }, 250);
+    const timeoutId = window.setTimeout(() => void searchGames(query), 250);
     return () => window.clearTimeout(timeoutId);
   }, [query, searchGames]);
 
   return (
     <div className="page-grid">
-      <SectionCard title="Search games" eyebrow="Library builder">
+      <SectionCard title="Add games" eyebrow="Library builder">
         <div className="toolbar-row">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                void searchGames(query);
-              }
-            }}
-            placeholder="Find a game"
-          />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a game" />
           <button className="primary-button" type="button" onClick={() => void searchGames(query)}>
             Search
           </button>
         </div>
         <div className="card-grid">
-          {gameSearchResults.map((game) => (
-            <article key={game.id} className="mini-card mini-card--game">
-              <img src={game.cover_url} alt={game.title} className="game-cover" />
-              <div>
-                <h3>{game.title}</h3>
-                <p className="subtle-text">{game.platforms.join(" · ")}</p>
-              </div>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={() =>
-                  void addGameToLibrary({
-                    game_id: game.id,
-                    platform: game.platforms[0] ?? "PC",
-                    status: "want_to_play",
-                  })
-                }
-              >
-                Add to library
-              </button>
-            </article>
-          ))}
+          {gameSearchResults.map((game) => {
+            const platform = selectedPlatforms[game.id] ?? game.platforms[0] ?? "PC";
+            return (
+              <article key={game.id} className="mini-card mini-card--game">
+                <Link to={`/app/games/${game.id}`}>
+                  <img src={game.cover_url} alt={game.title} className="game-cover" />
+                </Link>
+                <div>
+                  <Link to={`/app/games/${game.id}`} className="mini-card__title-link">
+                    <h3>{game.title}</h3>
+                  </Link>
+                  <div className="pill-row">
+                    {game.platforms.map((gamePlatform) => (
+                      <button
+                        key={gamePlatform}
+                        className={platform === gamePlatform ? "platform-pill platform-pill--active" : "platform-pill"}
+                        type="button"
+                        onClick={() => setSelectedPlatforms((current) => ({ ...current, [game.id]: gamePlatform }))}
+                      >
+                        {gamePlatform}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => void addGameToLibrary({ game_id: game.id, platform, status: "want_to_play" })}
+                >
+                  Add to library
+                </button>
+              </article>
+            );
+          })}
         </div>
-        {!gameSearchResults.length && query.trim().length >= 2 ? (
-          <p className="subtle-text">No games matched yet. Try a broader title or search another spelling.</p>
-        ) : null}
       </SectionCard>
 
-      <SectionCard title="Tracked library" eyebrow="Game shelves">
-        <div className="card-grid">
+      <SectionCard title="Your library" eyebrow="Grid or list">
+        <div className="toolbar-row">
+          <button className={viewMode === "grid" ? "nav-tab nav-tab--active" : "nav-tab"} type="button" onClick={() => setViewMode("grid")}>
+            Grid
+          </button>
+          <button className={viewMode === "list" ? "nav-tab nav-tab--active" : "nav-tab"} type="button" onClick={() => setViewMode("list")}>
+            List
+          </button>
+        </div>
+        <div className={viewMode === "grid" ? "card-grid" : "stack-list"}>
           {dashboard?.library.map((game) => (
-            <article key={game.id} className="mini-card mini-card--game">
-              <img src={game.cover_url} alt={game.game_title} className="game-cover" />
+            <article key={game.id} className={viewMode === "grid" ? "mini-card mini-card--game" : "activity-card activity-card--rich"}>
+              <Link to={`/app/games/${game.game_id}`}>
+                <img src={game.cover_url} alt={game.game_title} className={viewMode === "grid" ? "game-cover" : "game-cover game-cover--compact"} />
+              </Link>
               <div>
-                <h3>{game.game_title}</h3>
+                <Link to={`/app/games/${game.game_id}`} className="mini-card__title-link">
+                  <h3>{game.game_title}</h3>
+                </Link>
                 <p className="subtle-text">
                   {game.platform} · {game.status.replace(/_/g, " ")}
                 </p>
-                <p>{game.hours_played}h · {game.progress_percent}% complete · {game.playthroughs} playthroughs</p>
+                <p>
+                  {game.hours_played}h · {game.progress_percent}% complete · {game.playthroughs} playthroughs
+                </p>
                 <p>{game.note}</p>
-              </div>
-              <div className="control-row control-row--stack">
-                <select
-                  value={game.status}
-                  onChange={(event) => void updateLibraryEntry(game.id, { status: event.target.value })}
-                >
-                  {libraryStatuses.map((status) => (
-                    <option key={status.value} value={status.value}>
-                      {status.label}
-                    </option>
-                  ))}
-                </select>
                 <div className="control-row">
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void updateLibraryEntry(game.id, { hours_played: game.hours_played + 1 })}
-                  >
-                    +1 hour
+                  <select value={game.status} onChange={(event) => void updateLibraryEntry(game.id, { status: event.target.value })}>
+                    {libraryStatuses.map((status) => (
+                      <option key={status.value} value={status.value}>
+                        {status.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="ghost-button" type="button" onClick={() => void updateLibraryEntry(game.id, { hours_played: game.hours_played + 1 })}>
+                    +1h
                   </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() =>
-                      void updateLibraryEntry(game.id, {
-                        progress_percent: Math.min(100, game.progress_percent + 10),
-                      })
-                    }
-                  >
-                    +10% progress
+                  <button className="ghost-button" type="button" onClick={() => void updateLibraryEntry(game.id, { hours_played: game.hours_played + 5 })}>
+                    +5h
+                  </button>
+                  <button className="ghost-button" type="button" onClick={() => void updateLibraryEntry(game.id, { hours_played: game.hours_played + 10 })}>
+                    +10h
                   </button>
                 </div>
               </div>
@@ -379,7 +536,7 @@ export function ReviewStudioPage() {
   const [spoiler, setSpoiler] = useState(firstDraft?.spoiler ?? false);
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState("");
-  const [scores, setScores] = useState<Record<string, number>>(
+  const [scores, setScores] = useState<ScoreBreakdown>(
     firstDraft?.scores ?? {
       gameplay: 8,
       story: 8,
@@ -409,9 +566,7 @@ export function ReviewStudioPage() {
     if (query.trim().length < 2) {
       return;
     }
-    const timeoutId = window.setTimeout(() => {
-      void searchGames(query);
-    }, 250);
+    const timeoutId = window.setTimeout(() => void searchGames(query), 250);
     return () => window.clearTimeout(timeoutId);
   }, [query, searchGames]);
 
@@ -433,16 +588,7 @@ export function ReviewStudioPage() {
     <div className="page-grid">
       <SectionCard title="Choose the game first" eyebrow="Review setup">
         <div className="toolbar-row">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                void searchGames(query);
-              }
-            }}
-            placeholder="Search for a game"
-          />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search for a game" />
           <button className="primary-button" type="button" onClick={() => void searchGames(query)}>
             Search
           </button>
@@ -463,9 +609,6 @@ export function ReviewStudioPage() {
             </button>
           ))}
         </div>
-        {!gameSearchResults.length && query.trim().length >= 2 ? (
-          <p className="subtle-text">No results yet. Try a broader title like `elden`, `persona`, or `outer`.</p>
-        ) : null}
       </SectionCard>
 
       <SectionCard title="Scoring" eyebrow="10 category review">
@@ -475,7 +618,7 @@ export function ReviewStudioPage() {
             <strong>{totalScore}/100</strong>
           </div>
           <div className="chart-bar">
-            <div className="chart-bar__fill" style={{ width: `${totalScore}%` }} />
+            <div className="chart-bar__fill chart-bar__fill--accent" style={{ width: `${totalScore}%` }} />
           </div>
         </div>
         <div className="review-grid review-grid--scores">
@@ -538,17 +681,7 @@ export function ReviewStudioPage() {
                   setMessage("Choose a game before saving.");
                   return;
                 }
-                await saveDraft(
-                  {
-                    game_id: selectedGameId,
-                    verdict,
-                    body,
-                    scores,
-                    total_score: totalScore,
-                    spoiler,
-                  },
-                  firstDraft?.id,
-                );
+                await saveDraft({ game_id: selectedGameId, verdict, body, scores, total_score: totalScore, spoiler }, firstDraft?.id);
                 setMessage("Draft saved.");
               }}
             >
@@ -575,23 +708,38 @@ export function ReviewStudioPage() {
 }
 
 export function ProfilePage() {
-  const { profile, createList, deleteList, deleteReview, reactToReview, commentOnReview } = useAppData();
-  const [activePanel, setActivePanel] = useState<"followers" | "following" | null>(null);
-  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const { userId } = useParams();
+  const { token } = useAuth();
+  const { profile: ownProfile, createList, deleteList, deleteReview, reactToReview, commentOnReview } = useAppData();
+  const navigate = useNavigate();
+  const [activeProfile, setActiveProfile] = useState<ProfileResponse | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
   const [listTitle, setListTitle] = useState("");
   const [listDescription, setListDescription] = useState("");
   const [listItems, setListItems] = useState("");
-  const [selectedListId, setSelectedListId] = useState<string | null>(null);
-  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
 
-  if (!profile) {
-    return null;
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    if (!userId) {
+      setActiveProfile(ownProfile);
+      return;
+    }
+    setLoadingProfile(true);
+    void api
+      .getUserProfile(token, userId)
+      .then(setActiveProfile)
+      .finally(() => setLoadingProfile(false));
+  }, [ownProfile, token, userId]);
+
+  const profile = userId ? activeProfile : ownProfile;
+  if (!profile || loadingProfile) {
+    return <SectionCard title="Profile">Loading profile...</SectionCard>;
   }
 
   const rankingBars = profile.review_highlights.slice(0, 5);
   const timeBars = profile.most_played_games.slice(0, 5);
-  const selectedList = profile.featured_lists.find((list) => list.id === selectedListId) ?? null;
-  const selectedReview = profile.review_highlights.find((review) => review.id === selectedReviewId) ?? null;
 
   return (
     <div className="page-grid">
@@ -607,40 +755,29 @@ export function ProfilePage() {
             <p>{profile.tagline}</p>
           </div>
           <div className="profile-banner__stats">
-            <button className="stat-tile" type="button" onClick={() => setActivePanel("followers")}>
+            <div className="stat-tile">
               <span>{profile.stats.followers}</span>
               <small>followers</small>
-            </button>
-            <button className="stat-tile" type="button" onClick={() => setActivePanel("following")}>
+            </div>
+            <div className="stat-tile">
               <span>{profile.stats.following}</span>
               <small>following</small>
-            </button>
-            <div className="stat-tile">
-              <span>{profile.stats.total_hours}h</span>
-              <small>total time</small>
             </div>
+            {profile.is_viewer_profile ? (
+              <button className="icon-button" type="button" onClick={() => navigate("/app/profile/edit")} aria-label="Edit profile">
+                ✏️
+              </button>
+            ) : null}
           </div>
         </div>
       </section>
 
-      {activePanel ? (
-        <SectionCard title={activePanel === "followers" ? "Followers" : "Following"} eyebrow="People">
-          <div className="card-grid">
-            {(activePanel === "followers" ? profile.followers : profile.following_users).map((person) => (
-              <article key={person.id} className="mini-card">
-                <div className="identity-row">
-                  <Avatar src={person.avatar_url} alt={person.display_name} />
-                  <div>
-                    <h3>{person.display_name}</h3>
-                    <p className="subtle-text">@{person.username}</p>
-                  </div>
-                </div>
-                <p>{person.tagline}</p>
-              </article>
-            ))}
-          </div>
-        </SectionCard>
-      ) : null}
+      <MomentumPanel
+        totalHours={profile.stats.total_hours}
+        topScore={profile.review_highlights[0]?.total_score ?? 0}
+        totalGames={profile.stats.total_games}
+        totalReviews={profile.stats.total_reviews}
+      />
 
       <div className="page-grid page-grid--split">
         <SectionCard title="Review rankings" eyebrow="Main visual">
@@ -648,11 +785,11 @@ export function ProfilePage() {
             {rankingBars.map((review) => (
               <div key={review.id} className="chart-row">
                 <div>
-                  <strong>{review.game_title}</strong>
+                  <Link to={`/app/reviews/${review.id}`}>{review.game_title}</Link>
                   <span className="subtle-text">{review.total_score}/100</span>
                 </div>
                 <div className="chart-bar">
-                  <div className="chart-bar__fill" style={{ width: `${review.total_score}%`, background: profile.user.accent_color }} />
+                  <div className="chart-bar__fill chart-bar__fill--accent" style={{ width: `${review.total_score}%` }} />
                 </div>
               </div>
             ))}
@@ -664,14 +801,11 @@ export function ProfilePage() {
             {timeBars.map((game) => (
               <div key={game.id} className="chart-row">
                 <div>
-                  <strong>{game.game_title}</strong>
+                  <Link to={`/app/games/${game.game_id}`}>{game.game_title}</Link>
                   <span className="subtle-text">{game.hours_played}h</span>
                 </div>
                 <div className="chart-bar">
-                  <div
-                    className="chart-bar__fill"
-                    style={{ width: `${Math.min(100, game.hours_played * 2)}%`, background: profile.user.accent_color }}
-                  />
+                  <div className="chart-bar__fill chart-bar__fill--accent" style={{ width: `${Math.min(100, game.hours_played * 2)}%` }} />
                 </div>
               </div>
             ))}
@@ -679,50 +813,41 @@ export function ProfilePage() {
         </SectionCard>
       </div>
 
-      <SectionCard title="Featured lists" eyebrow="Add and remove">
-        <div className="editor-stack">
-          <input value={listTitle} onChange={(event) => setListTitle(event.target.value)} placeholder="List title" />
-          <input
-            value={listDescription}
-            onChange={(event) => setListDescription(event.target.value)}
-            placeholder="What is this list about?"
-          />
-          <input
-            value={listItems}
-            onChange={(event) => setListItems(event.target.value)}
-            placeholder="Comma-separated games"
-          />
-          <button
-            className="primary-button"
-            type="button"
-            onClick={async () => {
-              await createList({
-                title: listTitle,
-                description: listDescription,
-                items: listItems.split(",").map((item) => item.trim()).filter(Boolean),
-              });
-              setListTitle("");
-              setListDescription("");
-              setListItems("");
-            }}
-          >
-            Add list
-          </button>
-        </div>
+      <SectionCard title="Featured lists" eyebrow={profile.is_viewer_profile ? "Add and remove" : "Collections"}>
+        {profile.is_viewer_profile ? (
+          <div className="editor-stack">
+            <input value={listTitle} onChange={(event) => setListTitle(event.target.value)} placeholder="List title" />
+            <input value={listDescription} onChange={(event) => setListDescription(event.target.value)} placeholder="What is this list about?" />
+            <input value={listItems} onChange={(event) => setListItems(event.target.value)} placeholder="Comma-separated games" />
+            <button
+              className="primary-button"
+              type="button"
+              onClick={async () => {
+                await createList({
+                  title: listTitle,
+                  description: listDescription,
+                  items: listItems.split(",").map((item) => item.trim()).filter(Boolean),
+                });
+                setListTitle("");
+                setListDescription("");
+                setListItems("");
+              }}
+            >
+              Add list
+            </button>
+          </div>
+        ) : null}
         <div className="card-grid">
           {profile.featured_lists.map((list) => (
-            <article key={list.id} className="mini-card mini-card--interactive">
+            <article key={list.id} className="mini-card">
               <h3>{list.title}</h3>
               <p>{list.description}</p>
               <p className="subtle-text">{list.items.join(" · ")}</p>
-              <div className="control-row">
-                <button className="primary-button" type="button" onClick={() => setSelectedListId(list.id)}>
-                  Open list
-                </button>
+              {profile.is_viewer_profile ? (
                 <button className="ghost-button" type="button" onClick={() => void deleteList(list.id)}>
                   Delete list
                 </button>
-              </div>
+              ) : null}
             </article>
           ))}
         </div>
@@ -731,98 +856,133 @@ export function ProfilePage() {
       <SectionCard title="Published reviews" eyebrow="Reactions and comments">
         <div className="stack-list">
           {profile.review_highlights.map((review) => (
-            <article key={review.id} className="mini-card mini-card--review mini-card--interactive">
-              <div className="identity-row">
-                <img src={review.cover_url} alt={review.game_title} className="game-cover game-cover--compact" />
-                <div>
-                  <h3>{review.game_title}</h3>
-                  <p>{review.title}</p>
-                  <p className="subtle-text">{review.total_score}/100</p>
-                </div>
-              </div>
-              <p>{review.verdict}</p>
-              <div className="meta-row meta-row--left">
-                <button className="primary-button" type="button" onClick={() => setSelectedReviewId(review.id)}>
-                  Open review
-                </button>
-                <button className="ghost-button" type="button" onClick={() => void reactToReview(review.id)}>
-                  {review.current_user_reacted ? "Unreact" : "React"} · {review.reaction_count}
-                </button>
-                <span>{review.comment_count} comments</span>
-                <button className="ghost-button" type="button" onClick={() => void deleteReview(review.id)}>
-                  Delete review
-                </button>
-              </div>
-              <div className="comment-stack">
-                {review.comments.map((comment) => (
-                  <div key={comment.id} className="comment-card">
-                    <Avatar src={comment.author_avatar_url} alt={comment.author_name} />
-                    <div>
-                      <strong>{comment.author_name}</strong>
-                      <p>{comment.body}</p>
-                    </div>
-                  </div>
-                ))}
-                <div className="comment-entry">
-                  <input
-                    value={commentDrafts[review.id] ?? ""}
-                    onChange={(event) => setCommentDrafts((current) => ({ ...current, [review.id]: event.target.value }))}
-                    placeholder="Comment on this review"
-                  />
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={async () => {
-                      const body = commentDrafts[review.id]?.trim();
-                      if (!body) {
-                        return;
-                      }
-                      await commentOnReview(review.id, body);
-                      setCommentDrafts((current) => ({ ...current, [review.id]: "" }));
-                    }}
-                  >
-                    Post
-                  </button>
-                </div>
-              </div>
-            </article>
+            <ReviewPreviewCard
+              key={review.id}
+              review={review}
+              onReact={(emoji) => void reactToReview(review.id, emoji)}
+              onComment={(body) => commentOnReview(review.id, body)}
+              onDelete={profile.is_viewer_profile ? () => void deleteReview(review.id) : undefined}
+              showDelete={profile.is_viewer_profile}
+            />
           ))}
         </div>
       </SectionCard>
+    </div>
+  );
+}
 
-      {selectedList ? (
-        <DetailModal title={selectedList.title} subtitle={selectedList.description} onClose={() => setSelectedListId(null)}>
-          <div className="stack-list">
-            {selectedList.items.map((item) => (
-              <article key={item} className="mini-card">
-                <strong>{item}</strong>
-                <p className="subtle-text">Pinned in this custom collection.</p>
-              </article>
+export function ReviewDetailPage() {
+  const { reviewId } = useParams();
+  const { token } = useAuth();
+  const { reactToReview, commentOnReview } = useAppData();
+  const [review, setReview] = useState<ReviewHighlight | null>(null);
+
+  useEffect(() => {
+    if (!token || !reviewId) {
+      return;
+    }
+    void api.getReviewDetail(token, reviewId).then(setReview);
+  }, [reviewId, token]);
+
+  if (!review) {
+    return <SectionCard title="Review">Loading review...</SectionCard>;
+  }
+
+  return (
+    <div className="page-grid">
+      <SectionCard title={review.game_title} eyebrow="Full review">
+        <div className="detail-review">
+          <Link to={`/app/games/${review.game_id}`}>
+            <img src={review.cover_url} alt={review.game_title} className="game-cover detail-review__cover" />
+          </Link>
+          <div className="editor-stack">
+            <IdentityLink
+              to={`/app/users/${review.author_id}`}
+              avatar={avatarPresets[0].url}
+              name={review.author_name}
+              handle={review.author_handle}
+            />
+            <h2>{review.title}</h2>
+            <p>{review.verdict}</p>
+            {review.body.split("\n\n").map((paragraph, index) => (
+              <p key={index}>{paragraph}</p>
             ))}
+            <ReactionStack emojis={review.recent_reactions} />
+            <ReactionBar current={review.current_user_reaction} onSelect={(emoji) => void reactToReview(review.id, emoji)} />
+            {review.scores ? (
+              <div className="score-metrics">
+                {Object.entries(review.scores).map(([key, value]) => (
+                  <div key={key} className="stat-tile">
+                    <span>{value}</span>
+                    <small>{key.replace(/_/g, " ")}</small>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <CommentComposer placeholder="Add to the discussion" onSubmit={(body) => commentOnReview(review.id, body)} />
           </div>
-        </DetailModal>
-      ) : null}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
 
-      {selectedReview ? (
-        <DetailModal
-          title={selectedReview.game_title}
-          subtitle={`${selectedReview.title} · ${selectedReview.total_score}/100`}
-          onClose={() => setSelectedReviewId(null)}
-        >
-          <div className="detail-review">
-            <img src={selectedReview.cover_url} alt={selectedReview.game_title} className="game-cover detail-review__cover" />
-            <div className="editor-stack">
-              <p>{selectedReview.verdict}</p>
-              <p>{selectedReview.body}</p>
-              <div className="meta-row meta-row--left">
-                <span>{selectedReview.reaction_count} reactions</span>
-                <span>{selectedReview.comment_count} comments</span>
-                <span>{selectedReview.spoiler ? "Spoilers hidden" : "Spoiler-safe"}</span>
+export function GameDetailPage() {
+  const { gameId } = useParams();
+  const { token } = useAuth();
+  const [detail, setDetail] = useState<GameDetailResponse | null>(null);
+
+  useEffect(() => {
+    if (!token || !gameId) {
+      return;
+    }
+    void api.getGameDetail(token, gameId).then(setDetail);
+  }, [gameId, token]);
+
+  if (!detail) {
+    return <SectionCard title="Game">Loading game...</SectionCard>;
+  }
+
+  return (
+    <div className="page-grid">
+      <SectionCard title={detail.game.title} eyebrow="Game overview">
+        <div className="detail-review">
+          <img src={detail.game.cover_url} alt={detail.game.title} className="game-cover detail-review__cover" />
+          <div className="editor-stack">
+            <p>{detail.game.summary}</p>
+            <div className="metric-grid">
+              <div>
+                <span>{detail.average_score}</span>
+                <small>Community score</small>
+              </div>
+              <div>
+                <span>{detail.review_count}</span>
+                <small>Reviews logged</small>
               </div>
             </div>
+            <div className="pill-row">
+              {detail.top_platforms.map((platform) => (
+                <span key={platform} className="platform-pill platform-pill--active">
+                  {platform}
+                </span>
+              ))}
+            </div>
           </div>
-        </DetailModal>
-      ) : null}
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Associated reviews" eyebrow="Consensus">
+        <div className="stack-list">
+          {detail.reviews.map((review) => (
+            <ReviewPreviewCard
+              key={review.id}
+              review={review}
+              onReact={() => undefined}
+              onComment={async () => undefined}
+            />
+          ))}
+        </div>
+      </SectionCard>
     </div>
   );
 }
@@ -846,12 +1006,13 @@ export function NotificationsPage() {
 }
 
 export function SettingsPage() {
-  const { profile, notifications, privacySettings, updatePrivacySettings, updateCustomization } = useAppData();
+  const { profile, updateCustomization } = useAppData();
   const [tagline, setTagline] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [bannerUrl, setBannerUrl] = useState("");
   const [accentColor, setAccentColor] = useState("#8b5cf6");
   const [favoriteGames, setFavoriteGames] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
 
   useEffect(() => {
     if (!profile) {
@@ -864,11 +1025,9 @@ export function SettingsPage() {
     setFavoriteGames(profile.favorite_games.join(", "));
   }, [profile]);
 
-  const visibilityOptions = ["public", "followers", "private"] as const;
-
   return (
     <div className="page-grid">
-      <SectionCard title="Profile customization" eyebrow="Banners, avatars, accents">
+      <SectionCard title="Edit profile" eyebrow="Presets only">
         <div className="editor-stack">
           <input value={tagline} onChange={(event) => setTagline(event.target.value)} placeholder="Tagline" />
           <div className="preset-grid">
@@ -884,7 +1043,6 @@ export function SettingsPage() {
               </button>
             ))}
           </div>
-          <input value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} placeholder="Avatar image URL" />
           <div className="preset-grid preset-grid--banners">
             {bannerPresets.map((preset) => (
               <button
@@ -898,13 +1056,8 @@ export function SettingsPage() {
               </button>
             ))}
           </div>
-          <input value={bannerUrl} onChange={(event) => setBannerUrl(event.target.value)} placeholder="Banner image URL" />
           <input value={accentColor} onChange={(event) => setAccentColor(event.target.value)} placeholder="#8b5cf6" />
-          <input
-            value={favoriteGames}
-            onChange={(event) => setFavoriteGames(event.target.value)}
-            placeholder="Favorite games separated by commas"
-          />
+          <input value={favoriteGames} onChange={(event) => setFavoriteGames(event.target.value)} placeholder="Favorite games separated by commas" />
           <div className="mini-card mini-card--interactive">
             <div className="person-card__banner" style={{ backgroundImage: `url(${bannerUrl})` }} />
             <div className="person-card__content">
@@ -918,64 +1071,20 @@ export function SettingsPage() {
           <button
             className="primary-button"
             type="button"
-            onClick={() =>
-              void updateCustomization({
+            onClick={async () => {
+              await updateCustomization({
                 tagline,
                 avatar_url: avatarUrl,
                 banner_url: bannerUrl,
                 accent_color: accentColor,
                 favorite_games: favoriteGames.split(",").map((item) => item.trim()).filter(Boolean),
-              })
-            }
+              });
+              setStatusMessage("Saved profile changes.");
+            }}
           >
-            Save customization
+            Save changes
           </button>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Privacy defaults" eyebrow="Visibility">
-        <div className="card-grid">
-          {(["profile_visibility", "review_visibility", "activity_visibility"] as const).map((field) => (
-            <label key={field} className="field">
-              <span>{field.replace(/_/g, " ")}</span>
-              <select
-                value={privacySettings?.[field] ?? "public"}
-                onChange={(event) =>
-                  void updatePrivacySettings({
-                    profile_visibility:
-                      field === "profile_visibility"
-                        ? (event.target.value as "public" | "followers" | "private")
-                        : (privacySettings?.profile_visibility ?? "public"),
-                    review_visibility:
-                      field === "review_visibility"
-                        ? (event.target.value as "public" | "followers" | "private")
-                        : (privacySettings?.review_visibility ?? "public"),
-                    activity_visibility:
-                      field === "activity_visibility"
-                        ? (event.target.value as "public" | "followers" | "private")
-                        : (privacySettings?.activity_visibility ?? "public"),
-                  })
-                }
-              >
-                {visibilityOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Recent notifications" eyebrow="Quick peek">
-        <div className="stack-list">
-          {notifications.slice(0, 3).map((notification) => (
-            <article key={notification.id} className="notification-card">
-              <strong>{notification.title}</strong>
-              <p>{notification.body}</p>
-            </article>
-          ))}
+          {statusMessage ? <p className="success-text">{statusMessage}</p> : null}
         </div>
       </SectionCard>
     </div>

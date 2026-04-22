@@ -24,12 +24,27 @@ export type CommentItem = {
   created_at: string;
 };
 
+export type ScoreBreakdown = {
+  gameplay: number;
+  story: number;
+  visuals: number;
+  art_direction: number;
+  audio: number;
+  performance: number;
+  world_design: number;
+  replayability: number;
+  innovation: number;
+  emotional_impact: number;
+};
+
 export type FeedItem = {
   id: string;
   activity_type: string;
+  actor_id: string;
   actor_name: string;
   actor_handle: string;
   actor_avatar_url: string;
+  game_id: string;
   game_title: string;
   summary: string;
   timestamp: string;
@@ -37,6 +52,8 @@ export type FeedItem = {
   reaction_count: number;
   comment_count: number;
   current_user_reacted: boolean;
+  current_user_reaction: string | null;
+  recent_reactions: string[];
   comments: CommentItem[];
 };
 
@@ -71,15 +88,21 @@ export type ReviewHighlight = {
   id: string;
   game_id: string;
   game_title: string;
+  author_id: string;
+  author_name: string;
+  author_handle: string;
   title: string;
   verdict: string;
   body: string;
+  scores: ScoreBreakdown | null;
   total_score: number;
   visibility: string;
   spoiler: boolean;
   comment_count: number;
   reaction_count: number;
   current_user_reacted: boolean;
+  current_user_reaction: string | null;
+  recent_reactions: string[];
   comments: CommentItem[];
   cover_url: string;
 };
@@ -102,6 +125,7 @@ export type GameSearchResult = {
 
 export type ProfileResponse = {
   user: AuthUser;
+  is_viewer_profile: boolean;
   stats: {
     total_games: number;
     total_reviews: number;
@@ -122,6 +146,7 @@ export type ProfileResponse = {
 export type DashboardResponse = {
   current_user: AuthUser;
   feed: FeedItem[];
+  explore_posts: FeedItem[];
   discover_users: DiscoverUser[];
   library: LibraryEntry[];
   reviews: ReviewHighlight[];
@@ -135,7 +160,7 @@ export type ReviewDraft = {
   game_cover_url: string;
   verdict: string;
   body: string;
-  scores: Record<string, number>;
+  scores: ScoreBreakdown;
   total_score: number;
   updated_at: string;
   spoiler: boolean;
@@ -162,6 +187,14 @@ export type ProfileCustomizationRequest = {
   banner_url: string;
   accent_color: string;
   favorite_games: string[];
+};
+
+export type GameDetailResponse = {
+  game: GameSearchResult;
+  average_score: number;
+  review_count: number;
+  top_platforms: string[];
+  reviews: ReviewHighlight[];
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
@@ -214,8 +247,11 @@ export const api = {
     }),
   getDashboard: (token: string) => apiRequest<DashboardResponse>("/dashboard", { token }),
   getMyProfile: (token: string) => apiRequest<ProfileResponse>("/users/profile/me", { token }),
-  searchUsers: (token: string, query: string) =>
-    apiRequest<DiscoverUser[]>(`/users/search?q=${encodeURIComponent(query)}`, { token }),
+  getUserProfile: (token: string, userId: string) => apiRequest<ProfileResponse>(`/users/profile/${userId}`, { token }),
+  getReviewDetail: (token: string, reviewId: string) => apiRequest<ReviewHighlight>(`/reviews/published/${reviewId}`, { token }),
+  getPublishedReview: (token: string, reviewId: string) => apiRequest<ReviewHighlight>(`/reviews/published/${reviewId}`, { token }),
+  getGameDetail: (token: string, gameId: string) => apiRequest<GameDetailResponse>(`/games/${gameId}`, { token }),
+  searchUsers: (token: string, query: string) => apiRequest<DiscoverUser[]>(`/users/search?q=${encodeURIComponent(query)}`, { token }),
   getPrivacySettings: (token: string) => apiRequest<PrivacySettings>("/users/settings/privacy", { token }),
   updatePrivacySettings: (token: string, payload: PrivacySettings) =>
     apiRequest<PrivacySettings>("/users/settings/privacy", {
@@ -240,8 +276,7 @@ export const api = {
       method: "DELETE",
       token,
     }),
-  getDiscoverUsers: (token: string, query = "") =>
-    apiRequest<DiscoverUser[]>(`/follows/discover?q=${encodeURIComponent(query)}`, { token }),
+  getDiscoverUsers: (token: string, query = "") => apiRequest<DiscoverUser[]>(`/follows/discover?q=${encodeURIComponent(query)}`, { token }),
   followUser: (token: string, userId: string) =>
     apiRequest<DiscoverUser[]>(`/follows/${userId}`, {
       method: "POST",
@@ -252,8 +287,7 @@ export const api = {
       method: "DELETE",
       token,
     }),
-  searchGames: (token: string, query: string) =>
-    apiRequest<GameSearchResult[]>(`/games/search?q=${encodeURIComponent(query)}`, { token }),
+  searchGames: (token: string, query: string) => apiRequest<GameSearchResult[]>(`/games/search?q=${encodeURIComponent(query)}`, { token }),
   addLibraryEntry: (token: string, payload: { game_id: string; platform: string; status: string }) =>
     apiRequest<LibraryEntry>("/library", {
       method: "POST",
@@ -270,10 +304,11 @@ export const api = {
       token,
       body: JSON.stringify(payload),
     }),
-  reactToFeed: (token: string, feedId: string) =>
+  reactToFeed: (token: string, feedId: string, emoji: string) =>
     apiRequest<FeedItem>(`/feed/${feedId}/react`, {
       method: "POST",
       token,
+      body: JSON.stringify({ emoji }),
     }),
   commentOnFeed: (token: string, feedId: string, body: string) =>
     apiRequest<FeedItem>(`/feed/${feedId}/comments`, {
@@ -288,7 +323,7 @@ export const api = {
       game_id: string;
       verdict: string;
       body: string;
-      scores: Record<string, number>;
+      scores: ScoreBreakdown;
       total_score: number;
       spoiler: boolean;
     },
@@ -309,10 +344,11 @@ export const api = {
       method: "DELETE",
       token,
     }),
-  reactToReview: (token: string, reviewId: string) =>
+  reactToReview: (token: string, reviewId: string, emoji: string) =>
     apiRequest<ReviewHighlight>(`/reviews/published/${reviewId}/react`, {
       method: "POST",
       token,
+      body: JSON.stringify({ emoji }),
     }),
   commentOnReview: (token: string, reviewId: string, body: string) =>
     apiRequest<ReviewHighlight>(`/reviews/published/${reviewId}/comments`, {

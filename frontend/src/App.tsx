@@ -4,9 +4,11 @@ import { TopNav } from "./components/TopNav";
 import {
   DiscoverPage,
   FeedPage,
+  GameDetailPage,
   LibraryPage,
   NotificationsPage,
   ProfilePage,
+  ReviewDetailPage,
   ReviewStudioPage,
   SettingsPage,
 } from "./pages/AppPages";
@@ -53,12 +55,14 @@ export default function App() {
             <Route path="library" element={<LibraryPage />} />
             <Route path="review-studio" element={<ReviewStudioPage />} />
             <Route path="profile" element={<ProfilePage />} />
+            <Route path="profile/:userId" element={<ProfilePage />} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="reviews/:reviewId" element={<ReviewDetailPage />} />
+            <Route path="games/:gameId" element={<GameDetailPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
     </AuthProvider>
   );
 }
-

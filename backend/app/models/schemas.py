@@ -64,15 +64,21 @@ class ReviewHighlight(BaseModel):
     id: str
     game_id: str
     game_title: str
+    author_id: str = ""
+    author_name: str = ""
+    author_handle: str = ""
     title: str
     verdict: str
     body: str = ""
+    scores: ScoreBreakdown | None = None
     total_score: int = Field(ge=0, le=100)
     visibility: Visibility = "public"
     spoiler: bool = False
     comment_count: int = 0
     reaction_count: int = 0
     current_user_reacted: bool = False
+    current_user_reaction: str | None = None
+    recent_reactions: list[str] = Field(default_factory=list)
     comments: list[CommentItem] = Field(default_factory=list)
     cover_url: str
 
@@ -80,9 +86,11 @@ class ReviewHighlight(BaseModel):
 class FeedItem(BaseModel):
     id: str
     activity_type: ActivityType
+    actor_id: str = ""
     actor_name: str
     actor_handle: str
     actor_avatar_url: str
+    game_id: str = ""
     game_title: str
     summary: str
     timestamp: datetime
@@ -90,6 +98,8 @@ class FeedItem(BaseModel):
     reaction_count: int = 0
     comment_count: int = 0
     current_user_reacted: bool = False
+    current_user_reaction: str | None = None
+    recent_reactions: list[str] = Field(default_factory=list)
     comments: list[CommentItem] = Field(default_factory=list)
 
 
@@ -147,6 +157,7 @@ class FeaturedList(BaseModel):
 
 class ProfileResponse(BaseModel):
     user: AuthUser
+    is_viewer_profile: bool = True
     stats: ProfileStats
     tagline: str
     favorite_games: list[str]
@@ -160,6 +171,7 @@ class ProfileResponse(BaseModel):
 class DashboardResponse(BaseModel):
     current_user: AuthUser
     feed: list[FeedItem]
+    explore_posts: list[FeedItem]
     discover_users: list[DiscoverUser]
     library: list[LibraryEntry]
     reviews: list[ReviewHighlight]
@@ -238,3 +250,15 @@ class FeaturedListCreateRequest(BaseModel):
 
 class CommentCreateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=400)
+
+
+class ReactionCreateRequest(BaseModel):
+    emoji: str = Field(min_length=1, max_length=16)
+
+
+class GameDetailResponse(BaseModel):
+    game: GameSearchResult
+    average_score: int
+    review_count: int
+    top_platforms: list[str]
+    reviews: list[ReviewHighlight]

@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends
 
 from app.core.auth import get_current_user
-from app.models.schemas import AuthUser, CommentCreateRequest, ReviewDraft, ReviewDraftUpdateRequest, ReviewHighlight
+from app.models.schemas import AuthUser, CommentCreateRequest, ReactionCreateRequest, ReviewDraft, ReviewDraftUpdateRequest, ReviewHighlight
 from app.services.store import (
     comment_on_review,
     delete_review,
+    get_review_detail,
     list_review_drafts,
     publish_review_draft,
     react_to_review,
@@ -47,9 +48,18 @@ async def remove_review(review_id: str, current_user: AuthUser = Depends(get_cur
     return {"status": "deleted"}
 
 
+@router.get("/published/{review_id}", response_model=ReviewHighlight)
+async def published_review(review_id: str, current_user: AuthUser = Depends(get_current_user)) -> ReviewHighlight:
+    return get_review_detail(current_user, review_id)
+
+
 @router.post("/published/{review_id}/react", response_model=ReviewHighlight)
-async def react(review_id: str, current_user: AuthUser = Depends(get_current_user)) -> ReviewHighlight:
-    return react_to_review(current_user, review_id)
+async def react(
+    review_id: str,
+    payload: ReactionCreateRequest,
+    current_user: AuthUser = Depends(get_current_user),
+) -> ReviewHighlight:
+    return react_to_review(current_user, review_id, payload)
 
 
 @router.post("/published/{review_id}/comments", response_model=ReviewHighlight)

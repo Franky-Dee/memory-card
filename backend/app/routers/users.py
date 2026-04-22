@@ -33,6 +33,11 @@ async def my_profile(current_user: AuthUser = Depends(get_current_user)) -> Prof
     return get_profile(current_user)
 
 
+@router.get("/profile/{user_id}", response_model=ProfileResponse)
+async def view_profile(user_id: str, current_user: AuthUser = Depends(get_current_user)) -> ProfileResponse:
+    return get_profile(current_user, user_id)
+
+
 @router.get("/search", response_model=list[DiscoverUser])
 async def search_users(q: str = "", current_user: AuthUser = Depends(get_current_user)) -> list[DiscoverUser]:
     return list_discover_users(current_user, q)

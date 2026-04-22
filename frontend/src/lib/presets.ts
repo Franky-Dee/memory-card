@@ -14,6 +14,57 @@ function spriteAvatar(background: string, primary: string, accent: string, icon:
   `);
 }
 
+function abstractBanner(seed: string, primary: string, secondary: string, tertiary: string) {
+  const wave = seed
+    .split("")
+    .map((character, index) => `${index === 0 ? "M" : "L"}${index * 70},${90 + ((character.charCodeAt(0) % 7) - 3) * 12}`)
+    .join(" ");
+
+  return svgDataUri(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 180" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="${primary}" />
+          <stop offset="100%" stop-color="#090811" />
+        </linearGradient>
+        <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="${secondary}" stop-opacity="0.95" />
+          <stop offset="100%" stop-color="${tertiary}" stop-opacity="0.65" />
+        </linearGradient>
+      </defs>
+      <rect width="420" height="180" rx="28" fill="url(#bg)" />
+      <circle cx="340" cy="42" r="86" fill="${secondary}" fill-opacity="0.18" />
+      <circle cx="92" cy="154" r="120" fill="${tertiary}" fill-opacity="0.22" />
+      <path d="M-20 122 C54 72 118 168 194 120 S336 38 442 104" stroke="url(#glow)" stroke-width="24" fill="none" stroke-linecap="round" />
+      <path d="${wave}" stroke="rgba(255,255,255,0.35)" stroke-width="10" fill="none" stroke-linecap="round" />
+      <rect x="24" y="24" width="112" height="16" rx="8" fill="rgba(255,255,255,0.08)" />
+      <rect x="24" y="52" width="164" height="12" rx="6" fill="rgba(255,255,255,0.08)" />
+    </svg>
+  `);
+}
+
+const bannerPalette = [
+  ["#8b5cf6", "#22d3ee", "#f472b6"],
+  ["#312e81", "#38bdf8", "#a855f7"],
+  ["#0f172a", "#f59e0b", "#fb7185"],
+  ["#111827", "#34d399", "#60a5fa"],
+  ["#1f1147", "#c084fc", "#fb7185"],
+  ["#101828", "#f97316", "#22d3ee"],
+] as const;
+
+function paletteForSeed(seed: string) {
+  const total = seed.split("").reduce((sum, character) => sum + character.charCodeAt(0), 0);
+  return bannerPalette[total % bannerPalette.length];
+}
+
+export function getDisplayBanner(source: string | null | undefined, accentColor = "#8b5cf6", seed = "memory-card") {
+  if (source?.startsWith("data:image")) {
+    return source;
+  }
+  const [, secondary, tertiary] = paletteForSeed(seed);
+  return abstractBanner(seed, accentColor || "#8b5cf6", secondary, tertiary);
+}
+
 export const avatarPresets = [
   {
     id: "arcade-pad",
@@ -78,12 +129,12 @@ export const avatarPresets = [
 ] as const;
 
 export const bannerPresets = [
-  { id: "hades-ii", label: "Hades II", url: "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1145350/header.jpg" },
-  { id: "balatro", label: "Balatro", url: "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2379780/header.jpg" },
-  { id: "outer-wilds", label: "Outer Wilds", url: "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/753640/header.jpg" },
-  { id: "hifi-rush", label: "Hi-Fi RUSH", url: "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1817230/header.jpg" },
-  { id: "elden-ring", label: "ELDEN RING", url: "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1245620/header.jpg" },
-  { id: "persona-3-reload", label: "Persona 3 Reload", url: "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2161700/header.jpg" },
+  { id: "aurora", label: "Aurora Drift", url: abstractBanner("aurora", "#8b5cf6", "#22d3ee", "#f472b6") },
+  { id: "pulse", label: "Pulse Field", url: abstractBanner("pulse", "#312e81", "#38bdf8", "#a855f7") },
+  { id: "ember", label: "Ember Ribbon", url: abstractBanner("ember", "#111827", "#f97316", "#fb7185") },
+  { id: "verdant", label: "Verdant Echo", url: abstractBanner("verdant", "#0f172a", "#34d399", "#60a5fa") },
+  { id: "synth", label: "Synth Bloom", url: abstractBanner("synth", "#1f1147", "#c084fc", "#fb7185") },
+  { id: "signal", label: "Signal Mirage", url: abstractBanner("signal", "#101828", "#f59e0b", "#22d3ee") },
 ] as const;
 
 export const landingCoverArt = [

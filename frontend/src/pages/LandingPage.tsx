@@ -1,5 +1,12 @@
 import { Link } from "react-router-dom";
+
 import { landingCoverArt } from "../lib/presets";
+
+const artColumns = [
+  landingCoverArt,
+  [...landingCoverArt.slice(2), ...landingCoverArt.slice(0, 2)],
+  [...landingCoverArt.slice(4), ...landingCoverArt.slice(0, 4)],
+];
 
 export function LandingPage() {
   return (
@@ -9,8 +16,8 @@ export function LandingPage() {
           <p className="eyebrow">Memory Card</p>
           <h1>Give every game a better memory.</h1>
           <p className="hero-text">
-            Track playtime, rank favorites, build custom lists, publish deep ten-category reviews, and
-            follow people whose taste actually matters to you.
+            Track playtime, rank favorites, build custom lists, publish deep ten-category reviews, and follow
+            people whose taste actually matters to you.
           </p>
           <div className="hero-actions">
             <Link to="/signup" className="primary-button">
@@ -28,28 +35,32 @@ export function LandingPage() {
           </div>
           <div className="hero-badges">
             <span>10 category scoring</span>
-            <span>custom profiles</span>
+            <span>emoji reactions</span>
             <span>lists and rankings</span>
-            <span>followers and feed</span>
+            <span>social discovery</span>
           </div>
         </div>
 
-        <div className="landing-media">
-          <div className="moving-grid">
-            {landingCoverArt.concat(landingCoverArt).map((image, index) => (
-              <div
-                key={`${image}-${index}`}
-                className="moving-grid__cell"
-                style={{ backgroundImage: `url(${image})`, animationDelay: `${index * 0.8}s` }}
-              />
+        <div className="landing-media landing-media--river">
+          <div className="art-river" aria-hidden="true">
+            {artColumns.map((column, columnIndex) => (
+              <div key={`lane-${columnIndex}`} className="art-column">
+                <div className="art-column__track" style={{ animationDuration: `${20 + columnIndex * 4}s` }}>
+                  {[...column, ...column].map((image, index) => (
+                    <div key={`${image}-${columnIndex}-${index}`} className="moving-grid__cell art-tile">
+                      <img src={image} alt="" loading="lazy" />
+                    </div>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
           <div className="landing-overlay-card">
             <p className="eyebrow">What it feels like</p>
             <h2>A premium gaming journal with social momentum.</h2>
             <p>
-              Rich profile identity, game art everywhere, real discovery, and a feed built around meaningful
-              updates instead of empty noise.
+              Rich profile identity, game art everywhere, reactions that feel alive, and a feed built around
+              meaningful updates instead of empty noise.
             </p>
           </div>
         </div>
@@ -66,7 +77,7 @@ export function LandingPage() {
         </article>
         <article className="feature-card">
           <h2>Discovery that is useful</h2>
-          <p>Search for people, follow them, browse suggested games, and build a feed around shared taste.</p>
+          <p>Browse people, discover community posts, and move through a game graph that keeps pulling you forward.</p>
         </article>
       </section>
     </main>

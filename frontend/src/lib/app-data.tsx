@@ -19,6 +19,7 @@ import {
   type ProfileCustomizationRequest,
   type ProfileResponse,
   type ReviewDraft,
+  type ScoreBreakdown,
 } from "./api";
 import { useAuth } from "./auth";
 
@@ -26,7 +27,7 @@ type SaveDraftPayload = {
   game_id: string;
   verdict: string;
   body: string;
-  scores: Record<string, number>;
+  scores: ScoreBreakdown;
   total_score: number;
   spoiler: boolean;
 };
@@ -56,9 +57,9 @@ type AppDataContextValue = {
   saveDraft: (payload: SaveDraftPayload, draftId?: string) => Promise<void>;
   publishDraft: (draftId: string) => Promise<void>;
   deleteReview: (reviewId: string) => Promise<void>;
-  reactToFeed: (feedId: string) => Promise<void>;
+  reactToFeed: (feedId: string, emoji: string) => Promise<void>;
   commentOnFeed: (feedId: string, body: string) => Promise<void>;
-  reactToReview: (reviewId: string) => Promise<void>;
+  reactToReview: (reviewId: string, emoji: string) => Promise<void>;
   commentOnReview: (reviewId: string, body: string) => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -263,11 +264,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const reactToFeed = useCallback(
-    async (feedId: string) => {
+    async (feedId: string, emoji: string) => {
       if (!token) {
         return;
       }
-      await api.reactToFeed(token, feedId);
+      await api.reactToFeed(token, feedId, emoji);
       await refresh();
     },
     [refresh, token],
@@ -285,11 +286,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const reactToReview = useCallback(
-    async (reviewId: string) => {
+    async (reviewId: string, emoji: string) => {
       if (!token) {
         return;
       }
-      await api.reactToReview(token, reviewId);
+      await api.reactToReview(token, reviewId, emoji);
       await refresh();
     },
     [refresh, token],
